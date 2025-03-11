@@ -1,0 +1,121 @@
+---
+title: "自動散布図作成"
+author: "Shohei Tachikawa"
+date: "2024-07-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+
+
+# 必要なライブラリを読み込む
+library(tidyverse)
+library(ggrepel)
+library(Cairo)
+library(plotly)
+library(htmlwidgets)
+library(htmltools)
+library(showtext)
+
+# 日本語フォントを追加
+font_add_google("Noto Sans JP", "noto")
+showtext_auto()
+
+# outputフォルダが存在しない場合は作成
+dir.create("output", showWarnings = FALSE)
+
+# CSVファイルを読み込み、処理する関数
+read_and_process_csv <- function(file_path) {
+  data <- read_csv(file_path, locale = locale(encoding = "UTF-8")) %>%
+    column_to_rownames(var = names(.)[1]) %>%  # 1列目を行名に設定
+    drop_na()  # 欠損値を含む行を削除
+  
+  # ファイル名を属性として追加
+  attr(data, "filename") <- basename(file_path)
+  
+  return(data)
+}
+
+# inputフォルダから全てのCSVファイルを読み込む
+input_files <- list.files(path = "input", pattern = "*.csv", full.names = TRUE)
+data_list <- map(input_files, read_and_process_csv)
+
+# 全てのデータフレームを結合
+combined_data <- bind_rows(data_list, .id = "source")
+
+# ファイル名のリストを作成
+file_names <- map_chr(data_list, ~attr(., "filename"))
+
+# 静的な散布図を作成する関数（ggplotのみ）
+create_static_scatter_plot <- function(data, x_var, y_var, file_names) {
+  ggplot(data, aes(x = .data[[x_var]], y = .data[[y_var]], label = rownames(data))) +
+    geom_point(size = 6.5, alpha = 0.3) +
+    geom_text_repel() +
+    labs(x = x_var, y = y_var, title = paste(x_var, "vs", y_var),
+         caption = paste("参照CSVファイル:", file_names)) +
+    theme_grey() +
+    theme(plot.title = element_text(hjust = 0.5, size = 20, family = "noto"),  # タイトルの位置とサイズ
+          axis.title = element_text(size = 16, family = "noto"),  # 軸ラベルのサイズ
+          axis.text = element_text(size = 14, family = "noto"),  # 軸目盛りのサイズ
+          plot.caption = element_text(hjust = 1, size = 12, family = "noto"),  # キャプションの位置とサイズ
+          text = element_text(family = "noto"))
+}
+
+# 変数の全ての組み合わせを生成
+var_combinations <- combn(names(combined_data)[-(1:2)], 2, simplify = FALSE)
+
+# 静的な散布図をPDFに保存
+CairoPDF(file.path("output", "散布図一覧_静的.pdf"), width = 11, height = 8)
+walk(seq_along(var_combinations), ~{
+  p <- create_static_scatter_plot(combined_data, var_combinations[[.]][1], var_combinations[[.]][2],
+                                  paste(file_names, collapse = ", "))
+  print(p)
+})
+dev.off()
+
+# オプション: 全ての散布図を含むHTMLレポートを作成
+# 散布図を作成する関数
+create_interactive_scatter_plot <- function(data, x_var, y_var, file_names) {
+  ggplot(data, aes(x = .data[[x_var]], y = .data[[y_var]], label = rownames(data))) +
+    geom_point(size = 4, alpha = 0.5) +  # 点のサイズと透明度を設定
+    geom_text_repel(size = 3) +  # ラベルを追加（重なりを避ける）
+    labs(x = x_var, y = y_var, title = paste(x_var, "vs", y_var),
+         caption = paste("参照CSVファイル:", file_names)) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, size = 20, family = "noto"),  # タイトルの位置とサイズ
+          axis.title = element_text(size = 16, family = "noto"),  # 軸ラベルのサイズ
+          axis.text = element_text(size = 14, family = "noto"),  # 軸目盛りのサイズ
+          plot.caption = element_text(hjust = 1, size = 12, family = "noto"))  # キャプションの位置とサイズ
+}
+
+html_report <- tags$html(
+  tags$head(
+    tags$title("散布図レポート"),
+    tags$style(HTML("
+      .scatter-plot-container {
+        margin-bottom: 300px;
+      }
+    "))
+  ),
+  tags$body(
+    tags$h1("散布図分析", style = "font-family: 'Noto Sans JP';"),
+    map(var_combinations, ~{
+      tags$div(
+        class = "scatter-plot-container",
+        plotly::ggplotly(create_interactive_scatter_plot(combined_data, .x[1], .x[2], 
+                                                         paste(file_names, collapse = ", ")))
+      )
+    })
+  )
+)
+
+# HTMLファイルをoutputフォルダに保存
+save_html(html_report, file = file.path("output", "散布図レポート.html"))
+
+
+
+```

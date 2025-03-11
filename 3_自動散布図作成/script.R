@@ -1,0 +1,166 @@
+# 必要なライブラリを読み込む
+library(tidyverse)
+library(ggrepel)
+library(readr)
+library(stringi)
+library(htmltools)
+library(plotly)
+
+
+# outputフォルダが存在しない場合は作成
+dir.create("output", showWarnings = FALSE)
+
+# 文字コードを自動検出してCSVファイルを読み込む関数
+read_csv_auto_encoding <- function(file_path) {
+  # ファイルの内容を読み込み
+  raw_data <- read_file_raw(file_path)
+  
+  # 文字コードを自動検出
+  encoding <- stri_enc_detect(raw_data)[[1]]$Encoding[1]
+  
+  # 検出された文字コードでCSVファイルを読み込む
+  data <- read_csv(file_path, locale = locale(encoding = encoding)) %>%
+    column_to_rownames(var = names(.)[1])  # 1列目を行名に設定
+  
+  return(data)
+}
+
+# CSVファイルを読み込み、処理する関数
+read_and_process_csv <- function(file_path) {
+  data <- read_csv_auto_encoding(file_path)
+  
+  # 2列目以降の各列をチェック
+  non_numeric_cols <- names(data)[sapply(data, function(col) !is.numeric(col))]
+  
+  if (length(non_numeric_cols) > 0) {
+    stop(paste("エラー：以下の列が数値データではありません：", 
+               paste(non_numeric_cols, collapse = ", "), 
+               "\nファイル：", basename(file_path)))
+  }
+  
+  # 欠損値情報を記録
+  missing_info <- tibble(
+    変数名 = names(data),
+    欠損値数 = map_int(data, ~sum(is.na(.))),
+    欠損値割合 = map_dbl(data, ~mean(is.na(.)) * 100)
+  )
+  
+  # 欠損値を含む行を削除
+  data_cleaned <- data %>% drop_na()
+  
+  # ファイル名と欠損値情報を属性として追加
+  attr(data_cleaned, "filename") <- basename(file_path)
+  attr(data_cleaned, "missing_info") <- missing_info
+  
+  return(data_cleaned)
+}
+
+# inputフォルダから全てのCSVファイルを読み込む
+input_files <- list.files(path = "input", pattern = "*.csv", full.names = TRUE)
+data_list <- map(input_files, read_and_process_csv)
+
+# 全てのデータフレームを結合
+combined_data <- bind_rows(data_list, .id = "source")
+
+# ファイル名のリストを作成
+file_names <- map_chr(data_list, ~attr(., "filename"))
+
+# 静的な散布図を作成する関数（ggplotのみ）
+create_static_scatter_plot <- function(data, x_var, y_var, file_names) {
+  ggplot(data, aes(x = .data[[x_var]], y = .data[[y_var]], label = rownames(data))) +
+    geom_point(size = 6.5, alpha = 0.3) +
+    geom_text_repel() +
+    labs(x = x_var, y = y_var, title = paste(x_var, "vs", y_var),
+         caption = paste("参照CSVファイル:", file_names)) +
+    theme_grey() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 20),
+      axis.title = element_text(size = 16),
+      axis.text = element_text(size = 14),
+      plot.caption = element_text(hjust = 1, size = 12)
+    )
+}
+
+# 変数の全ての組み合わせを生成（最初の1列以外）
+var_combinations <- combn(names(combined_data)[-1], 2, simplify = FALSE)
+
+
+
+# 静的な散布図をPDFに保存
+print("散布図をPDFに保存中...")
+pdf_filename <- paste0(gsub("\\.csv$", "", file_names[1]), "_csv_散布図.pdf")
+pdf(file.path("output", pdf_filename), width = 11, height = 8, family = "Japan1")
+walk(seq_along(var_combinations), ~{
+  p <- create_static_scatter_plot(combined_data, var_combinations[[.]][1], var_combinations[[.]][2],
+                                  paste(file_names, collapse = ", "))
+  print(p)
+})
+dev.off()
+print("散布図のPDF保存が完了しました")
+
+
+
+# 動的散布図を作成する関数
+create_interactive_scatter_plot <- function(data, x_var, y_var, file_names) {
+  ggplot(data, aes(x = .data[[x_var]], y = .data[[y_var]], label = rownames(data))) +
+    geom_point(size = 4, alpha = 0.5) +  # 点のサイズと透明度を設定
+    labs(x = x_var, y = y_var, title = paste(x_var, "vs", y_var),
+         caption = paste("参照CSVファイル:", file_names)) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, size = 20),  # タイトルの位置とサイズ
+          axis.title = element_text(size = 16),  # 軸ラベルのサイズ
+          axis.text = element_text(size = 14))  # 軸目盛りのサイズ
+}
+
+
+# htmlレポートの調整
+html_report <- tags$html(
+  tags$head(
+    tags$title("散布図レポート"),
+    tags$style(HTML("
+      .scatter-plot-container {
+        margin-bottom: 300px;
+      }
+    "))
+  ),
+  tags$body(
+    tags$h1("散布図分析"),
+    map(var_combinations, ~{
+      tags$div(
+        class = "scatter-plot-container",
+        plotly::ggplotly(create_interactive_scatter_plot(combined_data, .x[1], .x[2], 
+                                                         paste(file_names, collapse = ", ")))
+      )
+    })
+  )
+)
+
+# HTMLファイルをoutputフォルダに保存
+print("散布図をhtmlで保存中...")
+html_filename <- paste0(gsub("\\.csv$", "", file_names[1]), "_csv_散布図.html")
+save_html(html_report, file = file.path("output", html_filename))
+print("散布図をhtmlで保存完了しました")
+
+
+# 初期の欠損値情報を集計する関数
+summarize_initial_missing_values <- function(data_list) {
+  map_dfr(seq_along(data_list), function(i) {
+    data <- data_list[[i]]
+    filename <- attr(data, "filename")
+    missing_info <- attr(data, "missing_info")
+    
+    missing_info %>%
+      mutate(ファイル名 = filename) %>%
+      select(ファイル名, everything())
+  })
+}
+
+# 初期の欠損値情報を集計してCSVファイルに出力（Shift-JISで保存）
+initial_missing_values_summary <- summarize_initial_missing_values(data_list)
+missing_values_filename <- paste0(gsub("\\.csv$", "", file_names[1]), "_csv_初期欠損値情報.csv")
+
+# Shift-JISで書き出し
+write.csv(initial_missing_values_summary, file = file.path("output", missing_values_filename), 
+          row.names = FALSE, fileEncoding = "shift-jis")
+
+print("すべての処理が完了しました")
