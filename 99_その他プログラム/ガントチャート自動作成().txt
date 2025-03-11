@@ -1,0 +1,428 @@
+Sub ガントチャート作成()
+
+    Dim lastRow As Long
+    Dim i As Long, j As Long, k As Long
+    Dim count As Long
+    Dim endColumn As Long
+    Dim washEndRow As Long
+    Dim lotCount As Integer ' 重合槽の数（6）
+    Dim repeatCount As Integer ' 繰り返し回数（B1セルの値）
+    Dim WashingDuration As Double
+    Dim DryingDuration As Double
+    Dim StartLabor() As Long
+    Dim EndLabor() As Long
+    Dim selectedMachine As Integer
+    Dim selectedDryer As Integer
+    Dim idx As Integer
+    Dim swapped As Boolean
+    Dim temp As Integer
+    Dim idx1 As Integer
+    Dim idx2 As Integer
+    Dim earliestAvailableTime As Double
+    Dim earliestAvailableTimeDrying As Double
+    Dim availableTime As Double
+    Dim availableTimeDrying As Double
+    Dim lotIndex As Integer
+    Dim maxPolyTime As Double
+    Dim polyRow As Long
+    Dim polyStartCol As Long
+    Dim polyEndCol As Long
+    Dim washMachineRow As Long
+    Dim washStartCol As Long
+    Dim washEndCol As Long
+    Dim dryMachineRow As Long
+    Dim dryStartCol As Long
+    Dim dryEndCol As Long
+    Dim sumRow As Long
+    Dim maxEndCol As Long
+    Dim colSums() As Long
+    Dim colSum As Long
+    Dim chartRow As Long
+    Dim cht As ChartObject
+    Dim co As ChartObject
+    Dim chartRange As Range
+    Dim totalLots As Integer
+    Dim baseColorR As Integer, baseColorG As Integer, baseColorB As Integer
+    Dim brightnessFactor As Double
+    Dim TankLastEndTime() As Double
+    Dim baseColors() As Variant
+    Dim taskLength As Long
+
+    ' 重合槽の数をカウント（A5:A10に「重合」と記載されたセルの数）
+    lotCount = Application.WorksheetFunction.CountIf(Range("A5:A10"), "重合")
+
+    ' 繰り返し回数をB1セルから取得
+    repeatCount = Cells(1, "B").Value
+
+    ' ガントチャートの開始列をG列（列番号7）に設定
+    Dim startColumn As Long
+    startColumn = 7 ' G列
+
+    ' 塗りつぶしの最終列（必要に応じて調整）
+    endColumn = Columns.Count
+
+    ' 既に塗りつぶしている箇所をすべて消す（G列以降）
+    Range(Cells(5, "G"), Cells(Rows.Count, endColumn)).ClearContents
+    Range(Cells(5, "G"), Cells(Rows.Count, endColumn)).Interior.ColorIndex = xlNone
+
+    ' D列とE列の最終行を取得
+    lastRow = Application.WorksheetFunction.Max(Cells(Rows.Count, "D").End(xlUp).Row, Cells(Rows.Count, "E").End(xlUp).Row)
+
+    ' D列とE列の工数を読み込み
+    ReDim StartLabor(1 To lastRow)
+    ReDim EndLabor(1 To lastRow)
+    For i = 1 To lastRow
+        If IsNumeric(Cells(i, "D").Value) Then
+            StartLabor(i) = Val(Cells(i, "D").Value)
+        Else
+            StartLabor(i) = 0
+        End If
+        If IsNumeric(Cells(i, "E").Value) Then
+            EndLabor(i) = Val(Cells(i, "E").Value)
+        Else
+            EndLabor(i) = 0
+        End If
+    Next i
+
+    ' 洗浄および乾燥の所要時間を読み込み
+    WashingDuration = Cells(11, "B").Value
+    DryingDuration = Cells(13, "B").Value
+
+    ' 総ロット数（重合槽数 × 繰り返し回数）
+    totalLots = lotCount * repeatCount
+
+    ' 配列を動的に宣言しサイズを設定
+    Dim PolymerizationDuration() As Double
+    ReDim PolymerizationDuration(1 To totalLots)
+
+    Dim PolymerizationStartTime() As Double
+    ReDim PolymerizationStartTime(1 To totalLots)
+
+    Dim PolymerizationEndTime() As Double
+    ReDim PolymerizationEndTime(1 To totalLots)
+
+    Dim WashingStartTime() As Double
+    ReDim WashingStartTime(1 To totalLots)
+
+    Dim WashingEndTime() As Double
+    ReDim WashingEndTime(1 To totalLots)
+
+    Dim DryingStartTime() As Double
+    ReDim DryingStartTime(1 To totalLots)
+
+    Dim DryingEndTime() As Double
+    ReDim DryingEndTime(1 To totalLots)
+
+    Dim WashingMachineAssigned() As Integer
+    ReDim WashingMachineAssigned(1 To totalLots)
+
+    Dim DryerAssigned() As Integer
+    ReDim DryerAssigned(1 To totalLots)
+
+    Dim LotColor() As Long
+    ReDim LotColor(1 To totalLots)
+
+    ' 洗浄機の利用可能時間を初期化
+    Dim WashingMachineAvailableTime(1 To 2) As Double
+    For i = 1 To 2
+        WashingMachineAvailableTime(i) = 0
+    Next i
+
+    ' 乾燥機の利用可能時間を初期化
+    Dim DryerAvailableTime(1 To 2) As Double
+    For i = 1 To 2
+        DryerAvailableTime(i) = 0
+    Next i
+
+    ' 洗浄の優先順位を設定
+    ' 最初の繰り返し（1回目）のロットは優先順位を高く（1）
+    ' 2回目以降のロットは優先順位を低く（2）
+    Dim LotPriority() As Integer
+    ReDim LotPriority(1 To totalLots)
+
+    ' 各重合槽の最終終了時間を記録する配列を初期化
+    ReDim TankLastEndTime(1 To lotCount)
+    For i = 1 To lotCount
+        TankLastEndTime(i) = 0
+    Next i
+
+    ' 各重合槽のベースカラーを設定
+    ReDim baseColors(1 To lotCount)
+    baseColors(1) = RGB(255, 0, 0) ' 赤
+    baseColors(2) = RGB(0, 128, 0) ' 緑
+    baseColors(3) = RGB(0, 0, 255) ' 青
+    baseColors(4) = RGB(255, 165, 0) ' オレンジ
+    baseColors(5) = RGB(128, 0, 128) ' 紫
+    baseColors(6) = RGB(0, 255, 255) ' シアン
+
+    ' 各重合ロットの情報を設定
+    lotIndex = 0
+
+    For j = 1 To repeatCount ' 繰り返し回数ごとに
+        For i = 1 To lotCount ' 重合槽ごとに
+            lotIndex = lotIndex + 1
+            ' サイクルタイムをB列から取得
+            PolymerizationDuration(lotIndex) = Cells(4 + i, "B").Value
+            ' 開始時間ずらしをC列から取得（最初の繰り返しのみ適用）
+            If j = 1 Then
+                PolymerizationStartTime(lotIndex) = WorksheetFunction.Max(TankLastEndTime(i), Cells(4 + i, "C").Value)
+            Else
+                PolymerizationStartTime(lotIndex) = TankLastEndTime(i)
+            End If
+            ' 重合終了時間を計算
+            PolymerizationEndTime(lotIndex) = PolymerizationStartTime(lotIndex) + PolymerizationDuration(lotIndex)
+            ' タンクの最終終了時間を更新
+            TankLastEndTime(i) = PolymerizationEndTime(lotIndex)
+            ' 色を設定（重合槽ごとに色を変える）
+            baseColorR = (baseColors(i) And &HFF)
+            baseColorG = (baseColors(i) \ &H100) And &HFF
+            baseColorB = (baseColors(i) \ &H10000) And &HFF
+            ' 明暗を調整
+            If (j Mod 2) = 1 Then
+                brightnessFactor = 1.0 ' 奇数回目（そのまま）
+            Else
+                brightnessFactor = 0.7 ' 偶数回目（少し暗く）
+            End If
+            baseColorR = WorksheetFunction.Min(baseColorR * brightnessFactor, 255)
+            baseColorG = WorksheetFunction.Min(baseColorG * brightnessFactor, 255)
+            baseColorB = WorksheetFunction.Min(baseColorB * brightnessFactor, 255)
+            LotColor(lotIndex) = RGB(baseColorR, baseColorG, baseColorB)
+            ' 優先順位を設定
+            If j = 1 Then
+                LotPriority(lotIndex) = 1 ' 1回目は優先順位高
+            Else
+                LotPriority(lotIndex) = 2 ' 2回目以降は優先順位低
+            End If
+        Next i
+    Next j
+
+    ' 洗浄プロセスのスケジューリングのためにロットをソート
+    ' 優先順位→重合終了時間の順でソート
+    Dim sortedIndices() As Integer
+    ReDim sortedIndices(1 To totalLots)
+    For i = 1 To totalLots
+        sortedIndices(i) = i
+    Next i
+
+    ' ソート（バブルソート）
+    Do
+        swapped = False
+        For i = 1 To totalLots - 1
+            idx1 = sortedIndices(i)
+            idx2 = sortedIndices(i + 1)
+            If LotPriority(idx1) > LotPriority(idx2) Or _
+               (LotPriority(idx1) = LotPriority(idx2) And PolymerizationEndTime(idx1) > PolymerizationEndTime(idx2)) Then
+                ' 交換
+                temp = sortedIndices(i)
+                sortedIndices(i) = sortedIndices(i + 1)
+                sortedIndices(i + 1) = temp
+                swapped = True
+            End If
+        Next i
+    Loop While swapped
+
+    ' 洗浄プロセスのスケジューリング
+    For idx = 1 To totalLots
+        i = sortedIndices(idx)
+        earliestAvailableTime = 1E+30
+        selectedMachine = 1
+
+        For j = 1 To 2 ' 2つの洗浄機
+            If WashingMachineAvailableTime(j) <= PolymerizationEndTime(i) Then
+                availableTime = PolymerizationEndTime(i)
+            Else
+                availableTime = WashingMachineAvailableTime(j)
+            End If
+
+            If availableTime < earliestAvailableTime Then
+                earliestAvailableTime = availableTime
+                selectedMachine = j
+            End If
+        Next j
+
+        ' 洗浄の割り当て
+        WashingStartTime(i) = earliestAvailableTime
+        WashingEndTime(i) = WashingStartTime(i) + WashingDuration
+        WashingMachineAvailableTime(selectedMachine) = WashingEndTime(i)
+        WashingMachineAssigned(i) = selectedMachine
+    Next idx
+
+    ' 乾燥プロセスのスケジューリング
+    ' 洗浄終了時間の早い順に処理
+    Dim sortedDryingIndices() As Integer
+    ReDim sortedDryingIndices(1 To totalLots)
+    For i = 1 To totalLots
+        sortedDryingIndices(i) = i
+    Next i
+
+    ' 洗浄終了時間でソート
+    Do
+        swapped = False
+        For i = 1 To totalLots - 1
+            idx1 = sortedDryingIndices(i)
+            idx2 = sortedDryingIndices(i + 1)
+            If WashingEndTime(idx1) > WashingEndTime(idx2) Then
+                ' 交換
+                temp = sortedDryingIndices(i)
+                sortedDryingIndices(i) = sortedDryingIndices(i + 1)
+                sortedDryingIndices(i + 1) = temp
+                swapped = True
+            End If
+        Next i
+    Loop While swapped
+
+    For idx = 1 To totalLots
+        i = sortedDryingIndices(idx)
+        earliestAvailableTimeDrying = 1E+30
+        selectedDryer = 1
+
+        For j = 1 To 2 ' 2つの乾燥機
+            If DryerAvailableTime(j) <= WashingEndTime(i) Then
+                availableTimeDrying = WashingEndTime(i)
+            Else
+                availableTimeDrying = DryerAvailableTime(j)
+            End If
+
+            If availableTimeDrying < earliestAvailableTimeDrying Then
+                earliestAvailableTimeDrying = availableTimeDrying
+                selectedDryer = j
+            End If
+        Next j
+
+        ' 乾燥の割り当て
+        DryingStartTime(i) = earliestAvailableTimeDrying
+        DryingEndTime(i) = DryingStartTime(i) + DryingDuration
+        DryerAvailableTime(selectedDryer) = DryingEndTime(i)
+        DryerAssigned(i) = selectedDryer
+    Next idx
+
+    ' ガントチャートの描画
+
+    ' 重合のガントチャートをプロット
+    For i = 1 To totalLots
+        ' 各重合槽の行を計算
+        polyRow = 4 + ((i - 1) Mod lotCount) + 1
+        ' 列番号を整数に変換
+        polyStartCol = startColumn + Int(PolymerizationStartTime(i))
+        polyEndCol = startColumn + Int(PolymerizationEndTime(i)) - 1
+
+        ' ガントチャートの描画
+        Range(Cells(polyRow, polyStartCol), Cells(polyRow, polyEndCol)).Interior.Color = LotColor(i)
+
+        ' 工程開始時の工数分、先頭に「1」を入力
+        For j = 0 To StartLabor(polyRow) - 1
+            If polyStartCol + j <= polyEndCol Then
+                Cells(polyRow, polyStartCol + j).Value = 1
+            End If
+        Next j
+
+        ' 工程終了時の工数分、末尾に「1」を入力
+        For j = 0 To EndLabor(polyRow) - 1
+            If polyEndCol - j >= polyStartCol Then
+                Cells(polyRow, polyEndCol - j).Value = 1
+            End If
+        Next j
+    Next i
+
+    ' 洗浄のガントチャートをプロット
+    For i = 1 To totalLots
+        washMachineRow = 10 + WashingMachineAssigned(i) ' 洗浄機は11行と12行
+        washStartCol = startColumn + Int(WashingStartTime(i))
+        washEndCol = startColumn + Int(WashingEndTime(i)) - 1
+
+        ' ガントチャートの描画
+        Range(Cells(washMachineRow, washStartCol), Cells(washMachineRow, washEndCol)).Interior.Color = LotColor(i)
+
+        ' 工程開始時の工数分、先頭に「1」を入力
+        For j = 0 To StartLabor(washMachineRow) - 1
+            If washStartCol + j <= washEndCol Then
+                Cells(washMachineRow, washStartCol + j).Value = 1
+            End If
+        Next j
+
+        ' 工程終了時の工数分、末尾に「1」を入力
+        For j = 0 To EndLabor(washMachineRow) - 1
+            If washEndCol - j >= washStartCol Then
+                Cells(washMachineRow, washEndCol - j).Value = 1
+            End If
+        Next j
+    Next i
+
+    ' 乾燥のガントチャートをプロット
+    For i = 1 To totalLots
+        dryMachineRow = 12 + DryerAssigned(i) ' 乾燥機は13行と14行
+        dryStartCol = startColumn + Int(DryingStartTime(i))
+        dryEndCol = startColumn + Int(DryingEndTime(i)) - 1
+
+        ' ガントチャートの描画
+        Range(Cells(dryMachineRow, dryStartCol), Cells(dryMachineRow, dryEndCol)).Interior.Color = LotColor(i)
+
+        ' 工程開始時の工数分、先頭に「1」を入力
+        For j = 0 To StartLabor(dryMachineRow) - 1
+            If dryStartCol + j <= dryEndCol Then
+                Cells(dryMachineRow, dryStartCol + j).Value = 1
+            End If
+        Next j
+
+        ' 工程終了時の工数分、末尾に「1」を入力
+        For j = 0 To EndLabor(dryMachineRow) - 1
+            If dryEndCol - j >= dryStartCol Then
+                Cells(dryMachineRow, dryEndCol - j).Value = 1
+            End If
+        Next j
+    Next i
+
+    ' --- 各列の数字の合計を計算して表示 ---
+
+    sumRow = lastRow + 1 ' ガントチャートの下の行に合計を表示
+
+    ' ガントチャートで使用した最大の列を特定
+    maxEndCol = startColumn ' 初期化
+
+    ' 各プロセスの終了列を確認し、最大値を更新
+    For i = 1 To totalLots
+        If startColumn + Int(PolymerizationEndTime(i)) - 1 > maxEndCol Then
+            maxEndCol = startColumn + Int(PolymerizationEndTime(i)) - 1
+        End If
+        If startColumn + Int(WashingEndTime(i)) - 1 > maxEndCol Then
+            maxEndCol = startColumn + Int(WashingEndTime(i)) - 1
+        End If
+        If startColumn + Int(DryingEndTime(i)) - 1 > maxEndCol Then
+            maxEndCol = startColumn + Int(DryingEndTime(i)) - 1
+        End If
+    Next i
+
+    ' 各列の数字（「1」）を合計して表示
+    ReDim colSums(startColumn To maxEndCol)
+    For j = startColumn To maxEndCol
+        colSum = Application.WorksheetFunction.Sum(Range(Cells(5, j), Cells(lastRow, j)))
+        Cells(sumRow, j).Value = colSum
+        colSums(j) = colSum
+    Next j
+
+    ' --- 折れ線グラフの作成 ---
+
+    chartRow = sumRow + 1 ' 合計の下の行
+
+    ' 既存のグラフを削除（必要に応じて）
+    For Each cht In ActiveSheet.ChartObjects
+        cht.Delete
+    Next cht
+
+    ' グラフを追加
+    Set co = ActiveSheet.ChartObjects.Add(Left:=Cells(chartRow, "F").Left, Top:=Cells(chartRow, "F").Top, Width:=500, Height:=300)
+    co.Chart.ChartType = xlLine
+
+    ' グラフのデータ範囲を設定
+    Set chartRange = Range(Cells(sumRow, startColumn), Cells(sumRow, maxEndCol))
+    co.Chart.SetSourceData Source:=chartRange
+
+    ' グラフの軸やタイトルの設定（必要に応じて）
+    co.Chart.HasTitle = True
+    co.Chart.ChartTitle.Text = "工数の推移"
+    co.Chart.Axes(xlCategory).HasTitle = True
+    co.Chart.Axes(xlCategory).AxisTitle.Text = "時間"
+    co.Chart.Axes(xlValue).HasTitle = True
+    co.Chart.Axes(xlValue).AxisTitle.Text = "工数"
+
+End Sub

@@ -1,0 +1,154 @@
+---
+title: "Untitled"
+output: html_document
+---
+## 2元配置法の実施～交互作用をプーリング～
+{r,eval=TRUE}
+#csvファイルはA1から並べること
+
+#num_Aに水準数を入力する
+num_A = 3
+num_B = 4
+
+library(Rcmdr)
+files <- list.files(pattern = "*.csv",full.names = T)
+datalist <- lapply(files,read.csv) #filesという名前を付けたリストにread.csvを適用させる
+data <-as.data.frame(datalist)
+data <- na.omit(data)
+
+
+#基本統計量の計算
+summary(data)
+
+#変数毎の基本統計量の算出
+numSummary(data[,3],groups=data$A,statistics=c("mean","sd","IQR","quantiles","cv","skewness","kurtosis"),quantiles=c(0,.25,.5,.75,1),type="2")
+
+#グラフをpdf保存する
+pdf("Graphing_Data.pdf")
+
+#箱ひげ図の描画
+boxplot(Characteristic_value~A,ylab = "Characteristic_value",xlab = "A",data=data)
+boxplot(Characteristic_value~B,ylab = "Characteristic_value",xlab = "B",data=data)
+
+
+#ドットチャートの描画
+stripchart(Characteristic_value~A,vertical = TRUE,method="stack", ylab = "Characteristic_value",xlab = "A",data=data)
+stripchart(Characteristic_value~B,vertical = TRUE,method="stack", ylab = "Characteristic_value",xlab = "B",data=data)
+
+
+#平均のプロット
+plotMeans(data$Characteristic_value,data$A,error.bars ="se")
+plotMeans(data$Characteristic_value,data$B,error.bars ="se")
+plotMeans(data$Characteristic_value,data$A,data$B,error.bars ="se")
+plotMeans(data$Characteristic_value,data$B,data$A,error.bars ="se")
+
+
+dev.off()
+
+
+##分散分析
+#手順１　モデル化：線形モデル（データの構造）
+LinearModel.1<-lm(Characteristic_value ~ A + B +A:B,data=data)
+summary(LinearModel.1)
+
+#手順２　モデルの検討：分散分析表の作成と要因効果の推定
+Anova_Table <- Anova(LinearModel.1, type ="II")
+print(Anova_Table)
+
+#手順３　再モデル化：線形モデル（データの構造）
+LinearModel.2<-lm(Characteristic_value ~ A + B ,data=data)
+summary(LinearModel.2)
+
+#手順４モデルの検討：分散分析表の作成と要因効果の推定
+Anova_Table2 <- Anova(LinearModel.2, type ="II")
+print(Anova_Table2)
+
+
+
+##分散分析後の推定・予測　交互作用をプーリングしたモデル
+#手順１　データの構造式
+#(a) 基本的診断
+pdf("Pooling_Basic_Diagnostic_Plot.pdf")
+oldpar <- par(oma=c(0,0,3,0),mfrow=c(2,2))
+plot(LinearModel.2) #交互作用をプーリングしたモデルはLInearModel.2
+par(oldpar)
+dev.off()
+
+##(b) 効果プロット
+pdf("Pooling_Effect_Plot.pdf")
+plot(allEffects(LinearModel.2),ask = FALSE)
+dev.off()
+
+
+###手順２　推定・予測 　交互作用をプーリング
+#(a) 分散の推定
+SA = Anova_Table2[1,1]
+SB = Anova_Table2[2,1]
+SEP = Anova_Table2[3,1]
+fEP = Anova_Table2[3,2]
+VEP = Anova_Table2[3,1] / Anova_Table2[3,2] 
+
+#(b)最適水準の決定と母平均の推定
+splitData <- split(data,data$A)
+for(i in 1:num_A){
+  c <- assign(paste("A", i, sep=""), splitData[[i]])
+  assign(paste("A", i,"mean", sep=""),mean(c[,3]))
+  print(paste("A", i,"mean",mean(c[,3]), sep="_"))
+}
+
+splitData <- split(data,data$B)
+for(i in 1:num_B){
+  c <- assign(paste("B", i, sep=""), splitData[[i]])
+  assign(paste("B", i,"mean", sep=""),mean(c[,3]))
+  print(paste("B", i,"mean",mean(c[,3]), sep="_"))
+}
+
+#全体平均の計算
+M = mean(data$Characteristic_value)
+print(M)
+
+## 最適水準における母平均の区間推定(信頼率：95%)
+{r,eval=TRUE}
+#上記で最適水準での推定値として選んだものをoptimal_levelに代入
+Optimal_level =  A3mean + B3mean -M
+
+
+#区間推定(実際の最適水準でのCharacteristic_valueの信頼区間を求める)
+kei = (1/nrow(A3)) + (1/nrow(B3)) - (1/nrow(data))
+VHe = kei*VEP
+haba = qt(0.975,fEP)*sqrt(VHe)
+ue = Optimal_level+haba
+sita=Optimal_level-haba
+print(paste("上側信頼限界", ue, sep="_"))
+print(paste("下側信頼限界", sita, sep="_"))
+
+## ２つの母平均の差の推定
+{r,eval=TRUE}
+#最適水準と比較したい水準の平均値を算出する。
+#今回はA1B1レベルとの差の推定をしたいとする。
+certain_level = A1mean + B1mean -M
+sa = Optimal_level - certain_level
+
+#区間推定
+keid= (1/nrow(A3)) + (1/nrow(B3)) + (1/nrow(A1)) + (1/nrow(B1))
+VHsa=keid*VEP
+habasa=qt(0.975,fEP)*sqrt(VHsa)
+sitasa = sa-habasa
+uesa = sa+habasa
+print(paste("差の上側信頼限界", uesa, sep="_"))
+print(paste("差の下側信頼限界", sitasa, sep="_"))
+
+## 最適水準でのデータの予測
+{r,eval=TRUE}
+#点予測
+yosoku = Optimal_level
+
+
+#予測区間
+keiyo = 1+kei
+VHyo = keiyo*VEP
+habayo=qt(0.975,fEP)*sqrt(VHyo)
+sitayo = yosoku-habayo
+ueyo = yosoku+habayo
+print(paste("予測の上側信頼限界", ueyo, sep="_"))
+print(paste("予測の下側信頼限界", sitayo, sep="_"))

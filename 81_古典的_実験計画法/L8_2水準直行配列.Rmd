@@ -1,0 +1,258 @@
+---
+title: "Untitled"
+output: html_document
+---
+## 2元配置法の実施～交互作用をプーリング～
+{r,eval=TRUE}
+
+
+library(Rcmdr)
+files <- list.files(pattern = "*.csv",full.names = T)
+datalist <- lapply(files,read.csv) #filesという名前を付けたリストにread.csvを適用させる
+data <-as.data.frame(datalist)
+data <- na.omit(data)
+#水準をfactor型に変換
+data.2 <- lapply(data[,1:7],as.factor)
+data.2 <- as.data.frame(data.2)
+data.2 <- cbind(data.2,data[,"Characteristic_value"])
+names(data.2) = names(data)
+data <- data.2
+
+
+
+#基本統計量の計算
+numSummary(data[,"Characteristic_value"],statistics=c("mean","sd","IQR","quantiles","cv","skewness","kurtosis"),quantiles=c(0,.25,.5,.75,1),type="2")
+#層別データはgroupsのアルファベットを層別したい変数名に変える。
+#今回はAで層別したときのCharacteristic_valueを確認
+numSummary(data[,"Characteristic_value"],groups = data$A,statistics=c("mean","sd","IQR","quantiles","cv","skewness","kurtosis"),quantiles=c(0,.25,.5,.75,1),type="2")
+
+
+#グラフをpdf保存する
+pdf("Graphing_Data.pdf")
+
+#箱ひげ図の描画
+boxplot(Characteristic_value~A,ylab = "Characteristic_value",xlab = "A",data=data)
+boxplot(Characteristic_value~B,ylab = "Characteristic_value",xlab = "B",data=data)
+boxplot(Characteristic_value~C,ylab = "Characteristic_value",xlab = "C",data=data)
+boxplot(Characteristic_value~D,ylab = "Characteristic_value",xlab = "D",data=data)
+
+
+
+#ドットチャートの描画
+stripchart(Characteristic_value~A,vertical = TRUE,method="stack", ylab = "Characteristic_value",xlab = "A",data=data)
+stripchart(Characteristic_value~B,vertical = TRUE,method="stack", ylab = "Characteristic_value",xlab = "B",data=data)
+stripchart(Characteristic_value~C,vertical = TRUE,method="stack", ylab = "Characteristic_value",xlab = "C",data=data)
+stripchart(Characteristic_value~D,vertical = TRUE,method="stack", ylab = "Characteristic_value",xlab = "D",data=data)
+
+
+#平均のプロット
+#主効果
+plotMeans(data$Characteristic_value,data$A,error.bars ="se")
+plotMeans(data$Characteristic_value,data$B,error.bars ="se")
+plotMeans(data$Characteristic_value,data$C,error.bars ="se")
+plotMeans(data$Characteristic_value,data$D,error.bars ="se")
+
+
+#交互作用A×B
+plotMeans(data$Characteristic_value,data$A,data$B,error.bars ="se")
+plotMeans(data$Characteristic_value,data$B,data$A,error.bars ="se")
+
+#交互作用B×C
+plotMeans(data$Characteristic_value,data$B,data$C,error.bars ="se")
+plotMeans(data$Characteristic_value,data$C,data$B,error.bars ="se")
+
+
+dev.off()
+
+
+
+
+##分散分析
+#手順１　モデル化：線形モデル（データの構造）
+LinearModel.1<-lm(Characteristic_value ~ A + B + C + D  + A:B + B:C ,data=data)
+summary(LinearModel.1)
+
+
+#手順２　モデルの検討：分散分析表の作成と要因効果の推定
+Anova_Table <- Anova(LinearModel.1, type ="II")
+print(Anova_Table)
+
+#手順３　再モデル化
+LinearModel.2<-lm(Characteristic_value ~ A + B + C + D + A:B + A:C + C:D ,data=data)
+summary(LinearModel.2)
+
+#手順４　モデルの再検討
+Anova_Table2 <- Anova(LinearModel.2, type ="II")
+print(Anova_Table2)
+
+
+##分散分析後の推定・予測　交互作用をプーリングしたモデル
+#手順１　データの構造式
+#(a) 基本的診断
+pdf("Basic_Diagnostic_Plot.pdf")
+oldpar <- par(oma=c(0,0,3,0),mfrow=c(2,2))
+plot(LinearModel.2) 
+par(oldpar)
+dev.off()
+
+##(b) 効果プロット
+pdf("Effect_Plot.pdf")
+plot(allEffects(LinearModel.2),ask = FALSE)
+dev.off()
+
+
+###手順２　推定・予測 　交互作用をプーリング
+#(a) 誤差分散の推定
+SEP = Anova_Table2["Residuals",1]
+fEP = Anova_Table2["Residuals",2]
+VEP = SEP / fEP 
+print(VEP)
+
+
+#(b)最適水準の決定と母平均の推定
+
+#AB２元表の作成
+splitData <- split(data,data$A)
+for(i in 1:2){
+  for(j in 1:2){
+  splitData2 <- split(splitData[[i]],splitData[[i]]$B)
+  c <- assign(paste("A", i,"B",j, sep=""), splitData2[[j]])
+  assign(paste("A", i,"B",j,"mean", sep=""),mean(c$Characteristic_value))
+  print(paste("A", i,"B",j,"mean",mean(c$Characteristic_value), sep=""))
+ }
+ }
+
+
+#AC２元表の作成
+splitData <- split(data,data$A)
+for(i in 1:2){
+  for(j in 1:2){
+  splitData2 <- split(splitData[[i]],splitData[[i]]$C)
+  c <- assign(paste("A", i,"C",j, sep=""), splitData2[[j]])
+  assign(paste("A", i,"C",j,"mean", sep=""),mean(c$Characteristic_value))
+  print(paste("A", i,"C",j,"mean",mean(c$Characteristic_value), sep=""))
+ }
+ }
+
+
+#AD 2元表の作成
+splitData <- split(data,data$A)
+for(i in 1:2){
+  for(j in 1:2){
+  splitData2 <- split(splitData[[i]],splitData[[i]]$D)
+  c <- assign(paste("A", i,"D",j, sep=""), splitData2[[j]])
+  assign(paste("A", i,"D",j,"mean", sep=""),mean(c$Characteristic_value))
+  print(paste("A", i,"D",j,"mean",mean(c$Characteristic_value), sep=""))
+ }
+ }
+
+
+#CD 2元表の作成
+splitData <- split(data,data$C)
+for(i in 1:2){
+  for(j in 1:2){
+  splitData2 <- split(splitData[[i]],splitData[[i]]$D)
+  c <- assign(paste("C", i,"D",j, sep=""), splitData2[[j]])
+  assign(paste("C", i,"D",j,"mean", sep=""),mean(c$Characteristic_value))
+  print(paste("C", i,"D",j,"mean",mean(c$Characteristic_value), sep=""))
+ }
+ }
+
+
+#DF 2元表の作成
+splitData <- split(data,data$D)
+for(i in 1:2){
+  for(j in 1:2){
+  splitData2 <- split(splitData[[i]],splitData[[i]]$F)
+  c <- assign(paste("D", i,"F",j, sep=""), splitData2[[j]])
+  assign(paste("D", i,"F",j,"mean", sep=""),mean(c$Characteristic_value))
+  print(paste("D", i,"F",j,"mean",mean(c$Characteristic_value), sep=""))
+ }
+ }
+
+
+
+#A水準平均の作成
+splitData <- split(data,data$A)
+for(i in 1:2){
+  c <- assign(paste("A", i, sep=""), splitData[[i]])
+  assign(paste("A", i,"mean", sep=""),mean(c$Characteristic_value))
+  print(paste("A", i,"mean",mean(c$Characteristic_value), sep="_"))
+}
+
+
+#B水準平均の作成
+splitData <- split(data,data$B)
+for(i in 1:2){
+  c <- assign(paste("B", i, sep=""), splitData[[i]])
+  assign(paste("B", i,"mean", sep=""),mean(c$Characteristic_value))
+  print(paste("B", i,"mean",mean(c$Characteristic_value), sep="_"))
+}
+
+
+#C水準平均の作成
+splitData <- split(data,data$C)
+for(i in 1:2){
+  c <- assign(paste("C", i, sep=""), splitData[[i]])
+  assign(paste("C", i,"mean", sep=""),mean(c$Characteristic_value))
+  print(paste("C", i,"mean",mean(c$Characteristic_value), sep="_"))
+}
+
+#D水準平均の作成
+splitData <- split(data,data$D)
+for(i in 1:2){
+  c <- assign(paste("D", i, sep=""), splitData[[i]])
+  assign(paste("D", i,"mean", sep=""),mean(c$Characteristic_value))
+  print(paste("D", i,"mean",mean(c$Characteristic_value), sep="_"))
+}
+
+
+#F水準平均の作成
+splitData <- split(data,data$F)
+for(i in 1:2){
+  c <- assign(paste("F", i, sep=""), splitData[[i]])
+  assign(paste("F", i,"mean", sep=""),mean(c$Characteristic_value))
+  print(paste("F", i,"mean",mean(c$Characteristic_value), sep="_"))
+}
+
+## 最適水準における母平均の区間推定(信頼率：95%)
+{r,eval=TRUE}
+#上記で最適水準での推定値として選んだものをoptimal_levelに代入
+Optimal_level =  19.8
+
+#区間推定(実際の最適水準でのCharacteristic_valueの信頼区間を求める)
+kei = (1+sum(Anova_Table2[1:nrow(Anova_Table2)-1,2]))/nrow(data)
+VHe = kei*VEP
+haba = qt(0.975,fEP)*sqrt(VHe)
+ue = Optimal_level+haba
+sita=Optimal_level-haba
+print(paste("上側信頼限界", ue, sep="_"))
+print(paste("下側信頼限界", sita, sep="_"))
+
+## ２つの母平均の差の推定
+{r,eval=TRUE}
+#推定したい水準の点推定を入力する。
+sa = 19.8-15.75
+
+#差の区間推定
+keid= 2*kei
+VHsa=keid*VEP
+habasa=qt(0.975,fEP)*sqrt(VHsa)
+sitasa = sa-habasa
+uesa = sa+habasa
+print(paste("差の上側信頼限界", uesa, sep="_"))
+print(paste("差の下側信頼限界", sitasa, sep="_"))
+
+## 最適水準でのデータの予測
+{r,eval=TRUE}
+#点予測
+yosoku = Optimal_level
+
+#予測区間
+keiyo = 1+kei
+VHyo = keiyo*VEP
+habayo=qt(0.975,fEP)*sqrt(VHyo)
+sitayo = yosoku-habayo
+ueyo = yosoku+habayo
+print(paste("予測の上側信頼限界", ueyo, sep="_"))
+print(paste("予測の下側信頼限界", sitayo, sep="_"))

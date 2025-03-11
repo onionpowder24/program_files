@@ -1,0 +1,150 @@
+---
+title: "一元配置"
+author: "Shohei Tachikawa"
+date: "2024-11-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+---
+title: "Untitled"
+output: html_document
+---
+## 1元配置法の実施
+#csvファイルはA1から並べること
+
+#num_Aに水準数を入力する
+num_A = 3
+
+
+library(Rcmdr)
+files <- list.files(pattern = "*.csv",full.names = T)
+datalist <- lapply(files,read.csv) #filesという名前を付けたリストにread.csvを適用させる
+data <-as.data.frame(datalist)
+data <- na.omit(data)
+
+
+#基本統計量の計算
+summary(data)
+
+#変数毎の基本統計量の算出
+numSummary(data[,2],groups=data$A,statistics=c("mean","sd","IQR","quantiles","cv","skewness","kurtosis"),quantiles=c(0,.25,.5,.75,1),type="2")
+
+#グラフをpdf保存する
+pdf("Graphing_Data.pdf")
+
+#箱ひげ図の描画
+boxplot(Characteristic_value~A,ylab = "Characteristic_value",xlab = "A",data=data)
+
+#ドットチャートの描画
+stripchart(Characteristic_value~A,vertical = TRUE,method="stack", ylab = "Characteristic_value",xlab = "A",data=data)
+
+#平均のプロット
+plotMeans(data$Characteristic_value,data$A,error.bars ="se")
+
+dev.off()
+
+
+##分散分析
+#手順１　モデル化：線形モデル（データの構造）
+LinearModel.1<-lm(Characteristic_value~A,data=data)
+summary(LinearModel.1)
+
+#手順２　モデルの検討：分散分析表の作成と要因効果の推定
+Anova_Table <- Anova(LinearModel.1, type ="II")
+print(Anova_Table)
+
+
+##分散分析後の推定・予測
+#手順１　データの構造式
+#(a) 基本的診断
+pdf("Basic_Diagnostic_Plot.pdf")
+oldpar <- par(oma=c(0,0,3,0),mfrow=c(2,2))
+plot(LinearModel.1)
+par(oldpar)
+dev.off()
+
+##(b) 効果プロット
+pdf("Effect_Plot.pdf")
+plot(allEffects(LinearModel.1),ask = FALSE)
+dev.off()
+
+
+
+###手順２　推定・予測
+#(a) 分散の推定
+VE = Anova_Table[2,1]/Anova_Table[2,2]
+SA = Anova_Table[1,1]
+SE = Anova_Table[2,1]
+fE = Anova_Table[2,2]
+
+#(b)最適水準の決定と母平均の推定
+splitData <- split(data,data$A)
+for(i in 1:num_A){
+  c <- assign(paste("A", i, sep=""), splitData[[i]])
+  assign(paste("A", i,"mean", sep=""),mean(c[,2]))
+  print(paste("A", i,"mean",mean(c[,2]), sep="_"))
+}
+
+## 最適水準における母平均の区間推定(信頼率：95%)
+#上記で最適水準での推定値として選んだものをoptimal_levelに代入
+Optimal_level =  A2mean
+
+
+#区間推定(実際の最適水準でのCharacteristic_valueの信頼区間を求める)
+kei = 1/nrow(A1)
+VHe = kei*VE
+haba = qt(0.975,fE)*sqrt(VHe)
+ue = Optimal_level+haba
+sita=Optimal_level-haba
+print(paste("上側信頼限界", ue, sep="_"))
+print(paste("下側信頼限界", sita, sep="_"))
+
+## ２つの母平均の差の推定
+#推定したい水準の平均値(A1_meanなど)を入力する。
+sa = A2mean - A1mean
+
+#区間推定
+keid= (1/nrow(A2)) + (1/nrow(A1))
+VHsa=keid*VE
+habasa=qt(0.975,fE)*sqrt(VHsa)
+sitasa = sa-habasa
+uesa = sa+habasa
+print(paste("差の上側信頼限界", uesa, sep="_"))
+print(paste("差の下側信頼限界", sitasa, sep="_"))
+
+## 最適水準でのデータの予測
+#点予測
+yosoku = Optimal_level
+
+
+#予測区間
+keiyo = 1+1/nrow(A2)
+VHyo = keiyo*VE
+habayo=qt(0.975,fE)*sqrt(VHyo)
+sitayo = yosoku-habayo
+ueyo = yosoku+habayo
+print(paste("予測の上側信頼限界", ueyo, sep="_"))
+print(paste("予測の下側信頼限界", sitayo, sep="_"))
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
